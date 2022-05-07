@@ -1,5 +1,6 @@
 LOG_DATA_PKL    =  "data.pkl"
 LOG_MODEL_PKL   =  "model.pkl"
+LOG_METRICS_PKL =  "metrics.pkl"
 
 #-------------------------------------------------------------
 
@@ -18,64 +19,54 @@ from mlflow.tracking import MlflowClient
 
 class JobPrediction:
     """Production Class for predicting the probability of a job from skills"""
-    # Class attributes 
-    path_clusters_config = None
-    skills_clusters_df   = None
-    
-    tracking_uri  = None
-    experiment_id = None
-    run_id        = None
-    
-    model        = None
-    all_features = None 
-    all_jobs     = None 
-    
+
+    # ========================================================
+    # ***********    Initialization Functions    ************
+    # ========================================================
+
     # Constructor
-    def __init__(self, tracking_uri, experiment_id, run_id, clusters_yaml_path):
-        # Store variables
-        self.tracking_uri    = tracking_uri
-        self.experiment_id = experiment_id
-        self.run_id          = run_id
-        
+    def __init__(self, mlflow_uri, run_id, clusters_yaml_path):
+
+        # Constants
+        self.tracking_uri  = mlflow_uri
+        self.run_id        = run_id
+
         # Retrieve model and features
-        mlflow_objs = self.load_mlflow_objs(tracking_uri, 
-                                            experiment_id, 
-                                            run_id)
-        self.model        = mlflow_objs[0]
-        self.all_features = mlflow_objs[1]
-        self.all_jobs     = mlflow_objs[2]
+        mlflow_objs = self.load_mlflow_objs()
+        self.model           = mlflow_objs[0]
+        self.features_names  = mlflow_objs[1]
+        self.targets_names   = mlflow_objs[2]
         
         # Load clusters config 
         self.path_clusters_config = clusters_yaml_path
         self.skills_clusters_df = self.load_clusters_config(clusters_yaml_path)
         
-    # -------------------------------------------
-    
-    # Constructor helper functions 
-    
-    def load_mlflow_objs(self, tracking_uri, experiment_id, run_id):
+
+    def load_mlflow_objs(self):
         """Load objects from the MLflow run"""
-        
-        # Get artifact path
-        artifact_path = os.path.join(tracking_uri.replace("file://", ""), 
-                                     experiment_id, 
-                                     run_id, 
-                                     'artifacts')
-        
+        # Initialize client and experiment
+        mlflow.set_tracking_uri(self.tracking_uri)
+        client = MlflowClient()
+
+        run = mlflow.get_run(self.run_id)
+        artificats_path = run.info.artifact_uri
+
         # Load data pkl
-        data_path  = os.path.join(artifact_path, LOG_DATA_PKL)
+        data_path = os.path.join(artificats_path, LOG_DATA_PKL)
         with open(data_path, 'rb') as handle:
             data_pkl = pickle.load(handle)
-            
-        # Load model pkl
-        model_path = os.path.join(artifact_path, LOG_MODEL_PKL)
-        with open(model_path, 'rb') as handle:
-            model_pkl = pickle.load(handle)
 
-        # Return model and data labels 
-        return model_pkl["model_object"], data_pkl["features_names"], data_pkl["targets_names"]
-    
-    
+        # Load model
+        model_path = os.path.join(artificats_path, LOG_MODEL_PKL)
+        with open(model_path, "rb") as f:
+            model_pkl = pickle.load(f)
+
+        # Return model and data labels
+        return model_pkl["model_object"], \
+               data_pkl["features_names"], \
+               data_pkl["targets_names"]
+
+
     def load_clusters_config(self, path_clusters_config):
         """Load skills clusters developed in 03_feature_engineering.ipynb"""
         
@@ -92,7 +83,16 @@ class JobPrediction:
                                    columns=["cluster_name", "skill"])
         return clusters_df
 
-    
+    # ========================================================
+    # ***********           Getters               ************
+    # ========================================================
+
+    def get_all_skills(self):
+        return self.features_names
+
+    def get_all_jobs(self):
+        return self.targets_names
+
     # ========================================================
     # **************    Prediction Functions    **************  
     # ========================================================
@@ -108,7 +108,7 @@ class JobPrediction:
             return cluster_features
             
         def create_skills_features(self, available_skills, exclude_features):
-            all_features = pd.Series(self.all_features.copy())
+            all_features = pd.Series(self.features_names.copy())
             skills_names = all_features[~all_features.isin(exclude_features)]
             ohe_skills = pd.Series(skills_names.isin(available_skills).astype(int).tolist(), 
                                    index=skills_names)
@@ -122,7 +122,7 @@ class JobPrediction:
                                                    exclude_features=clusters_features.index)
         # ... Combine features and sort 
         features = pd.concat([skills_features, clusters_features])
-        features = features[self.all_features]
+        features = features[self.features_names]
         return features.values 
     
     
@@ -134,7 +134,7 @@ class JobPrediction:
         # Predict and format
         predictions = self.model.predict_proba([features_array])
         predictions = [prob[0][1] for prob in predictions] # Keep positive probs 
-        predictions = pd.Series(predictions, index=self.all_jobs)
+        predictions = pd.Series(predictions, index=self.targets_names)
         
         return predictions
 
