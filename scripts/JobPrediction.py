@@ -138,6 +138,33 @@ class JobPrediction:
         
         return predictions
 
-    
+
+    # ========================================================
+    # **************    Simulation Functions    **************
+    # ========================================================
+
+    def recommend_new_skills(self, available_skills, target_job, threshold=0):
+        # Calculate base probability
+        base_predictions = self.predict_jobs_probabilities(available_skills)
+
+        # Get all possible additional skills
+        all_skills = pd.Series(self.get_all_skills())
+        new_skills = all_skills[~all_skills.isin(available_skills)].copy()
+
+        # Simulate new skills
+        simulated_results = []
+        for skill in new_skills:
+            additional_skill_prob = self.predict_jobs_probabilities([skill] + available_skills)
+            additional_skill_uplift = (additional_skill_prob - base_predictions) / base_predictions
+            additional_skill_uplift.name = skill
+            simulated_results.append(additional_skill_uplift)
+
+        simulated_results = pd.DataFrame(simulated_results)
+
+        # Recommend new skills
+        target_results = simulated_results[target_job].sort_values(ascending=False)
+        positive_mask = (target_results > threshold)
+        return target_results[positive_mask]
+
     # ==============================================================
     
